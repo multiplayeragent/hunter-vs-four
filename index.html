@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hunter vs Four</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #070a12; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #eef0f6; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #000c; font-weight: 800; }
+  #round { top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center; font-size: 20px; }
+  #round small { display: block; font-size: 15px; letter-spacing: 2px; margin-top: 2px; }
+  #role { top: calc(max(10px, env(safe-area-inset-top)) + 60px); left: 50%; transform: translateX(-50%); padding: 3px 14px; border-radius: 999px; font-size: 14px; white-space: nowrap; text-shadow: none; }
+  #role.hunter { background: #b3202c; } #role.survivor { background: #2d6fd0; } #role:empty { display: none; }
+  #big { inset: 0; display: grid; place-items: center; text-align: center; font-size: min(11vw, 76px); line-height: 1; color: #ffd36b; -webkit-text-stroke: 2px #3a0a0a; padding: 0 16px; }
+  #big small { display: block; font-size: min(5vw, 20px); color: #fff; -webkit-text-stroke: 0; margin-top: 12px; }
+  #msg { left: 16px; right: 16px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 30px); text-align: center; font-size: 16px; }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .75; white-space: nowrap; }
+  #fear { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 45%, #c0001a 125%); }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0008; }
+  #over[hidden], #stick[hidden], .pad[hidden], .pad button[hidden] { display: none; }
+  .card { width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #151824; border: 1px solid #ffffff22; box-sizing: border-box; }
+  .card h2 { margin: 0 0 4px; font-size: 24px; color: #ffd36b; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #ff8a8a; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.me { color: #ffd36b; font-weight: 700; }
+  .card p { margin: 6px 0 0; font-size: 14px; opacity: .88; }
+  button.go { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd36b; color: #1b1400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #stick { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 2px solid #ffffff55; background: #ffffff12; pointer-events: none; }
+  #stick i { position: absolute; left: 35px; top: 35px; width: 40px; height: 40px; border-radius: 50%; background: #ffffff66; }
+  .pad { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); display: flex; gap: 12px; }
+  .pad button { width: 80px; height: 80px; border-radius: 50%; border: 2px solid #ffffff77; background: #ffffff1a; color: #fff; font: 800 14px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffd36b55; } .pad button.wait { opacity: .4; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="fear"></div>
+<div class="hud" id="round"></div>
+<div class="hud" id="role"></div>
+<div class="hud" id="big"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="net">Connecting…</div>
+<div id="stick" hidden><i></i></div>
+<div class="pad" id="pad" hidden><button data-k="run">RUN</button><button data-k="lunge">LUNGE</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><p id="overLine"></p>
+  <h3>This night</h3><ol id="results"></ol>
+  <h3>Best nights</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Play again</button>
+  <p id="next"></p>
+</div></div>
+<script type="module">
+/* ═══ HUNTER VS FOUR · a Multiplayer Agent starter ════════════════════════════════════
+ * One hunter, four survivors, a locked yard. Fix the generators, open the gate, get out.
+ * Party, 2–5 players; bots fill both sides.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ speeds, the hunter's lunge and senses, repair and rescue times, the yard's map
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   YARD .......... reading CONFIG.map: walls, crates, generators, the cage, the gates;
+ *                   bumping into things; paths for bots; line of sight
+ *   PEOPLE ........ the survivor and hunter models, name tags, footprints
+ *   NIGHT (HOST) .. brief → hunt → over: picking the hunter, repairs, catches, the cage,
+ *                   the gates, escapes, points. Only the host writes these.
+ *   BOTS .......... bot survivors repair, flee, rescue and run for the gate; a bot hunter
+ *                   patrols, listens and chases (the same brain drives you in ?attract)
+ *   ME ............ walking, running, lunging. Each player writes only its own.
+ *   HUD & RESULTS . generators, timer, your role, hints, results card, leaderboard
+ *   INPUT & SOUND . keyboard, mouse, touch stick and buttons, WebAudio effects
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` (one packed JSON field: night id, position,
+ *     facing, what it's doing: still, walking, running, lunging) about 12 times a second,
+ *     `hb` (heartbeat) once a second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `game` (id, v, phase,
+ *     timers, who hunts, generator progress, who is caged, who escaped, rescues, points,
+ *     the winner) and `bots` (every bot's position, ~10 times a second). A new host adopts
+ *     both and carries on.
+ *   - No intents needed for play: repairing (standing still at a generator), opening the
+ *     cage (standing at it), catching (the hunter touching you) and escaping (walking out
+ *     of an open gate) are all decided by the host from everyone's latest position.
+ *     The only intent is "again" (start the next night sooner from the results card).
+ *   - A new night starts only when the host bumps game.id; every client then goes back
+ *     to its start spot.
+ *   - NOT SECRET: the hunter's screen only draws survivors it can see (or hear running),
+ *     but every position is in the room state, so dev tools would show them all.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "best-night": your most points in one night, on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  survivors: 4,          // bots fill the survivors' side up to this many (the hunter is always one)
+  briefMs: 4000,         // survivors scatter while the hunter wakes up
+  nightMs: 180000,       // the gates and everyone left inside are the hunter's after this
+  overMs: 10000,         // results before the next night
+  need: 3,               // generators to fix before the gates open (the map has more spots)
+  repairMs: 20000,       // ms for one survivor to fix one generator (two together: twice as fast)
+  repairReach: 2.4,      // stand still this close to a generator's middle to fix it
+  rescueMs: 2500,        // ms a survivor stands at the cage to open it (frees everyone inside)
+  cageMs: 35000,         // left in the cage this long, the hunter takes you away for the night
+  safeMs: 3000,          // a freed survivor can't be caught again for this long
+  walk: 3.6, run: 5.2,   // survivor speeds, units/s (running is loud)
+  hunterSpeed: 5.0,      // the hunter is faster than walking, slower than running...
+  lunge: { speed: 2.3, ms: 300, cooldown: 3000 }, // ...but can lunge: this many times its speed, for this long
+  catchReach: 1.1,       // the hunter this close catches you
+  stunMs: 1800,          // the hunter stands still this long after a catch
+  botPace: { survivor: 0.93, hunter: 1 }, // bots move at this share of a player's speed
+  hunterSight: 15,       // the hunter's screen only shows survivors in sight within this range...
+  hearRun: 14,           // ...or running within this range (they leave footprints)
+  hearRepair: 14,        // a bot hunter hears a generator being fixed this far away
+  terror: 13,            // survivors hear a heartbeat when the hunter is this close
+  points: { repair: 1, rescue: 3, escape: 5, catch: 3, shutout: 5 }, // repair = per 10% of a generator; shutout = hunter, nobody escaped
+  ambient: 0.75,         // how bright the night is
+  board: "best-night",
+  tile: 2,               // world units per map character
+  // The yard. # wall, x crate, G a generator, C the cage, E an exit gate (in the outer wall),
+  // M where the hunter starts, S where the survivors start, . open ground.
+  map: [
+    "##########################",
+    "#....x.....#......x....G.#",
+    "#.G..x.....#..........x..#",
+    "#....xxx.......####...M..#",
+    "#..........x...#.....x...#",
+    "E....##........#..G......#",
+    "#.....#...x..........##..#",
+    "#..x..#.......C......#...#",
+    "#..x.......x.........#...E",
+    "#......G.................#",
+    "#.....####.......x.......#",
+    "#..x.....#....######..x..#",
+    "#..x...S.#..........x....#",
+    "#........#...G...........#",
+    "#..####......x....##..G..#",
+    "#.....x...........#......#",
+    "#.....x.....#.....#...x..#",
+    "##########################",
+  ],
+};
+const BOT_NAMES = ["Mara", "Ollie", "Jun", "Tess", "Rafa", "Nell", "Ike", "Zoe"];
+const COLORS = ["#4da6ff", "#ffd23f", "#52d273", "#ff6fb5", "#ff8c42", "#c77dff", "#3fc7c0", "#a3e635"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'hunter-vs-four',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+if (ATTRACT) Object.assign(CONFIG, { briefMs: 300, overMs: 2500, repairMs: 7000, ambient: 2.0, stunMs: 1200, hunterSight: 40, hearRun: 30, catchReach: 1.3, cageMs: 12000, botPace: { survivor: 0.85, hunter: 1.05 } });
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fb) { const raw = S.shared[key], m = memo.get(key); if (m && m.raw === raw) return m.v; const v = parse(raw, fb); memo.set(key, { raw, v }); return v; }
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const isBot = (id) => id[0] === "@"; // bot ids look like "@3"; sessionIds never have an @
+
+// ── YARD ────────────────────────────────────────────────────────────────────────────
+const MAP = CONFIG.map, MH = MAP.length, MW = MAP[0].length, TS = CONFIG.tile, R = 0.35;
+const cell = (cx, cz) => (MAP[cz] && MAP[cz][cx]) || "#";
+const solid = (cx, cz) => "#xEG".includes(cell(cx, cz));
+const toCell = (v) => Math.floor(v / TS);
+const center = (cx, cz) => ({ x: (cx + 0.5) * TS, z: (cz + 0.5) * TS });
+const find = (ch) => MAP.flatMap((row, z) => [...row].flatMap((c, x) => (c === ch ? [{ ...center(x, z), cx: x, cz: z }] : [])));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const GENS = find("G"), CAGE = find("C")[0], HUNTER_START = find("M")[0], SURV_START = find("S")[0];
+// An exit gate sits in the outer wall; you escape by walking into its doorway (one cell inward).
+const EXITS = find("E").map((e) => ({ ...e, door: center(e.cx + (e.cx === 0 ? 1 : e.cx === MW - 1 ? -1 : 0), e.cz + (e.cz === 0 ? 1 : e.cz === MH - 1 ? -1 : 0)) }));
+const CAGE_R = 1.5; // the cage's bars
+const cageSlot = (i) => ({ x: CAGE.x + Math.sin(i * 1.7) * 0.6, z: CAGE.z + Math.cos(i * 1.7) * 0.6 });
+const wallAt = (x, z) => solid(toCell(x), toCell(z));
+/** Slide a body along walls, crates and generators; nobody walks through the cage. */
+function moveBody(o, dx, dz) {
+  const hit = (x, z) => wallAt(x - R, z - R) || wallAt(x + R, z - R) || wallAt(x - R, z + R) || wallAt(x + R, z + R);
+  if (!hit(o.x + dx, o.z)) o.x += dx;
+  if (!hit(o.x, o.z + dz)) o.z += dz;
+  const ex = o.x - CAGE.x, ez = o.z - CAGE.z, d = Math.hypot(ex, ez), min = CAGE_R + R;
+  if (d < min && d > 1e-4) { const nx = CAGE.x + (ex / d) * min, nz = CAGE.z + (ez / d) * min; if (!hit(nx, nz)) { o.x = nx; o.z = nz; } }
+}
+/** Walls block sight; crates and generators don't (they're low). */
+function canSee(a, b) {
+  const d = dist(a, b), n = Math.ceil(d / 0.4);
+  for (let i = 1; i < n; i++) { const t = i / n; if (cell(toCell(a.x + (b.x - a.x) * t), toCell(a.z + (b.z - a.z) * t)) === "#") return false; }
+  return true;
+}
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+const blockedCell = (x, z) => solid(x, z) || (x === CAGE.cx && z === CAGE.cz);
+/** A walkable route from a to b as cell centres (ending at b), or [] if there is none. */
+function route(a, b) {
+  const sx = toCell(a.x), sz = toCell(a.z), gx = toCell(b.x), gz = toCell(b.z), goal = gx + gz * MW;
+  if (blockedCell(gx, gz)) return [];
+  const prev = new Int32Array(MW * MH).fill(-1), q = [sx + sz * MW];
+  prev[q[0]] = q[0];
+  for (let h = 0; h < q.length && prev[goal] < 0; h++) {
+    const k = q[h], x = k % MW, z = (k / MW) | 0;
+    for (const [dx, dz] of DIRS) {
+      const nx = x + dx, nz = z + dz, n = nx + nz * MW;
+      if (blockedCell(nx, nz) || prev[n] >= 0 || (dx && dz && (blockedCell(x + dx, z) || blockedCell(x, z + dz)))) continue;
+      prev[n] = k; q.push(n);
+    }
+  }
+  if (prev[goal] < 0) return [];
+  const out = [{ x: b.x, z: b.z }];
+  for (let k = prev[goal]; k !== prev[k]; k = prev[k]) out.unshift(center(k % MW, (k / MW) | 0));
+  return out;
+}
+/** The open spot next to a generator (or anything solid) that's closest to `from`. */
+function standBy(p, from) {
+  const spots = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => ({ x: p.x + dx * TS * 0.75, z: p.z + dz * TS * 0.75 })).filter((s) => !wallAt(s.x, s.z));
+  return spots.sort((a, b) => dist(a, from) - dist(b, from))[0] || p;
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: !ATTRACT }); // the preview recorder renders in software: keep it cheap
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.autoUpdate = false; // only the yard casts moon shadows: draw them once
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#070a12");
+scene.fog = new THREE.Fog("#070a12", ATTRACT ? 24 : 16, ATTRACT ? 55 : 40);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 200);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.fov = ATTRACT ? 46 : camera.aspect < 1 ? 70 : 50; camera.updateProjectionMatrix(); } // wider on a tall phone
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const sky = new THREE.HemisphereLight("#7d8fd6", "#1d1a12", CONFIG.ambient); scene.add(sky);
+const moon = new THREE.DirectionalLight("#9fb4ff", ATTRACT ? 1.4 : 0.9);
+moon.position.set(MW * TS * 0.2, 40, -10); moon.target.position.set(MW * TS / 2, 0, MH * TS / 2); moon.castShadow = true; moon.shadow.mapSize.set(1024, 1024);
+Object.assign(moon.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 120 }); moon.shadow.bias = -0.0006;
+scene.add(moon, moon.target);
+function canvasTex(w, h, paint, rx, ry) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (rx) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); }
+  return t;
+}
+const mat = (color, more) => new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...more });
+const speckle = (c, w, h, n, col) => { for (let i = 0; i < n; i++) { c.fillStyle = col(); c.fillRect(Math.random() * w, Math.random() * h, 2, 2); } };
+const ground = canvasTex(128, 128, (c, w, h) => { c.fillStyle = "#3b4a2c"; c.fillRect(0, 0, w, h); speckle(c, w, h, 900, () => ["#334226", "#45552f", "#4b4a33", "#2d3a22"][Math.floor(Math.random() * 4)]); }, MW / 2, MH / 2);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(MW * TS + 60, MH * TS + 60), mat("#ffffff", { map: ground, roughness: 1 }));
+floor.rotation.x = -Math.PI / 2; floor.position.set((MW * TS) / 2, 0, (MH * TS) / 2); floor.receiveShadow = true; scene.add(floor);
+const mtx = new THREE.Matrix4();
+function instanced(geo, material, spots, y, rotate) {
+  const m = new THREE.InstancedMesh(geo, material, Math.max(1, spots.length));
+  spots.forEach((p, i) => m.setMatrixAt(i, rotate ? mtx.makeRotationY(i * 0.9).setPosition(p.x, y, p.z) : mtx.makeTranslation(p.x, y, p.z)));
+  m.count = spots.length; m.castShadow = m.receiveShadow = true; scene.add(m); return m;
+}
+const WALL_H = 2.4;
+const stone = canvasTex(64, 64, (c) => { c.fillStyle = "#5b5f6b"; c.fillRect(0, 0, 64, 64); for (let y = 0; y < 64; y += 16) for (let x = (y / 16) % 2 ? -16 : 0; x < 64; x += 32) { c.fillStyle = ["#666a77", "#535763", "#5f6370"][(x + y) % 3 === 0 ? 0 : (x + y) % 3]; c.fillRect(x + 1, y + 1, 30, 14); } });
+instanced(new THREE.BoxGeometry(TS, WALL_H, TS), mat("#fff", { map: stone }), find("#"), WALL_H / 2);
+const crateTex = canvasTex(64, 64, (c) => { c.fillStyle = "#7a5530"; c.fillRect(0, 0, 64, 64); c.strokeStyle = "#4b331b"; c.lineWidth = 6; c.strokeRect(3, 3, 58, 58); c.beginPath(); c.moveTo(3, 3); c.lineTo(61, 61); c.stroke(); });
+instanced(new THREE.BoxGeometry(1.7, 1.2, 1.7), mat("#fff", { map: crateTex }), find("x"), 0.6, true);
+// Glows: sprites for lights, sparks and beacons.
+const glowTex = canvasTex(64, 64, (c) => { const g = c.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, "#fff"); g.addColorStop(0.3, "#ffffff88"); g.addColorStop(1, "#fff0"); c.fillStyle = g; c.fillRect(0, 0, 64, 64); });
+const glow = (color, size, opacity = 1) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity })); s.scale.set(size, size, 1); return s; };
+// Generators: a machine with a lamp on a pole. The lamp lights up when it's fixed.
+const gens = GENS.map((p) => {
+  const g = new THREE.Group(), body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 1.1), mat("#8fa36f", { metalness: 0.3, roughness: 0.6, emissive: "#2a3018" }));
+  body.position.y = 0.55; body.castShadow = true; g.add(body);
+  for (const s of [-1, 1]) { const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.8, 1.15), mat("#2f3529")); fin.position.set(s * 0.45, 0.55, 0); g.add(fin); }
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6), mat("#2f3529")); pole.position.set(0.55, 1.9, 0); g.add(pole);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), new THREE.MeshBasicMaterial({ color: "#3a3320" })); bulb.position.set(0.55, 2.75, 0); g.add(bulb);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.3, 1.5, 40, 1, Math.PI / 2, 0.01).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#ffd36b", transparent: true, opacity: 0.85, depthWrite: false })); ring.position.y = 0.04; g.add(ring);
+  const light = new THREE.PointLight("#ffd36b", 0, 12, 1.6); light.position.set(0.55, 2.6, 0); g.add(light);
+  const beacon = glow("#ff9a3a", 1.6, 0.6); beacon.position.set(0.55, 2.75, 0); g.add(beacon); // so you can find it in the dark
+  g.position.set(p.x, 0, p.z); scene.add(g);
+  return { g, body, bulb, ring, light, beacon, shown: -1 };
+});
+const ringGeoCache = new Map();
+const progressRing = (f) => { const k = Math.round(f * 40); if (!ringGeoCache.has(k)) ringGeoCache.set(k, new THREE.RingGeometry(1.3, 1.5, 40, 1, Math.PI / 2, Math.max(0.01, (k / 40) * Math.PI * 2)).rotateX(-Math.PI / 2)); return ringGeoCache.get(k); };
+// The cage: a ring of bars with a roof.
+{
+  const bars = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6), mat("#8a8f9a", { metalness: 0.7, roughness: 0.4 }), 20);
+  for (let i = 0; i < 20; i++) { const a = (i / 20) * Math.PI * 2; bars.setMatrixAt(i, mtx.makeTranslation(CAGE.x + Math.sin(a) * CAGE_R, 1.2, CAGE.z + Math.cos(a) * CAGE_R)); }
+  bars.castShadow = true; scene.add(bars);
+  for (const y of [0.15, 2.4]) { const hoop = new THREE.Mesh(new THREE.TorusGeometry(CAGE_R, 0.07, 6, 28).rotateX(Math.PI / 2), mat("#5a5f6a", { metalness: 0.6 })); hoop.position.set(CAGE.x, y, CAGE.z); scene.add(hoop); } // open top: you can see who's inside
+  const base = new THREE.Mesh(new THREE.CircleGeometry(CAGE_R, 24).rotateX(-Math.PI / 2), mat("#3a2a2a")); base.position.set(CAGE.x, 0.02, CAGE.z); scene.add(base);
+}
+const cageLight = new THREE.PointLight("#ff3344", 4, 8, 1.6); cageLight.position.set(CAGE.x, 2.2, CAGE.z); scene.add(cageLight);
+const cageRing = new THREE.Mesh(progressRing(0), new THREE.MeshBasicMaterial({ color: "#7dffa0", transparent: true, opacity: 0.9, depthWrite: false })); cageRing.position.set(CAGE.x, 0.05, CAGE.z); cageRing.scale.setScalar(1.45); scene.add(cageRing);
+// Exit gates: bars that slide up when enough generators run, with a green light.
+const gates = EXITS.map((e) => {
+  const g = new THREE.Group(), side = e.cx === 0 || e.cx === MW - 1;
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(side ? 0.4 : TS, 0.3, side ? TS : 0.4), mat("#3a3f4a")); frame.position.y = WALL_H; g.add(frame);
+  const bars = new THREE.Group();
+  for (let i = 0; i < 6; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.12, WALL_H, 0.12), mat("#7a808c", { metalness: 0.7 })); const o = -TS / 2 + 0.2 + i * 0.32; b.position.set(side ? 0 : o, WALL_H / 2, side ? o : 0); bars.add(b); }
+  g.add(bars);
+  const light = new THREE.PointLight("#ff4433", 3, 9, 1.6); light.position.set(e.door.x - e.x, 2.2, e.door.z - e.z); g.add(light);
+  g.position.set(e.x, 0, e.z); scene.add(g);
+  return { g, bars, light };
+});
+renderer.shadowMap.needsUpdate = true;
+
+// Particles: a ring buffer of little glowing bits (sparks, dust).
+const bits = [];
+function burst(x, y, z, color, n, speed) {
+  for (let i = 0; i < n; i++) {
+    if (bits.length > 160) break;
+    const s = glow(color, 0.3 + Math.random() * 0.3); s.position.set(x, y, z); scene.add(s);
+    bits.push({ s, vx: (Math.random() - 0.5) * speed, vy: Math.random() * speed, vz: (Math.random() - 0.5) * speed, life: 0.5 + Math.random() * 0.5 });
+  }
+}
+function drawBits(dt) {
+  for (let i = bits.length - 1; i >= 0; i--) {
+    const b = bits[i]; b.life -= dt; b.vy -= 8 * dt; b.s.position.x += b.vx * dt; b.s.position.y = Math.max(0.05, b.s.position.y + b.vy * dt); b.s.position.z += b.vz * dt;
+    b.s.material.opacity = Math.max(0, b.life * 1.5); if (b.life <= 0) { scene.remove(b.s); bits.splice(i, 1); }
+  }
+}
+
+// ── PEOPLE ──────────────────────────────────────────────────────────────────────────
+const skin = mat("#f1d2b5", { roughness: 0.7 }), dark = mat("#121216", { roughness: 1 });
+function nameTag(text, color = "#fff") {
+  const tex = canvasTex(256, 64, (c) => { c.font = "bold 32px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000c"; c.strokeText(text, 128, 44); c.fillStyle = color; c.fillText(text, 128, 44); });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true })); s.scale.set(3, 0.75, 1); return s;
+}
+const blobGeo = new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI / 2), blobMat = new THREE.MeshBasicMaterial({ color: "#000", transparent: true, opacity: 0.35, depthWrite: false });
+function makeSurvivor(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(), m = mat(color, { roughness: 0.6, emissive: color, emissiveIntensity: 0.18 }); // a little glow so you can spot each other at night
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 0.95, 10), m); torso.position.y = 0.75;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10), skin); head.position.y = 1.5;
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(["#3b2416", "#1d1d22", "#a0662d"][color.charCodeAt(2) % 3])); hair.position.y = 1.53; hair.rotation.x = -0.3;
+  const arms = [-1, 1].map((s) => { const a = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.5, 3, 6), m); a.geometry.translate(0, -0.3, 0); a.position.set(s * 0.38, 1.15, 0); body.add(a); return a; });
+  body.add(torso, head, hair); torso.castShadow = head.castShadow = true;
+  const blob = new THREE.Mesh(blobGeo, blobMat); blob.position.y = 0.02;
+  g.add(body, blob);
+  const tag = name && !ATTRACT ? nameTag(name) : null; if (tag) { tag.position.y = 2.2; g.add(tag); }
+  scene.add(g);
+  return { g, body, arms, tag, color };
+}
+/** a = 0 still, 1 walk, 2 run, 3 repairing; caged survivors slump, escaped ones are gone. */
+function poseSurvivor(v, a, caged, t) {
+  const sw = a === 1 || a === 2 ? Math.sin(t * (a === 2 ? 16 : 10)) : 0;
+  v.body.position.y = Math.abs(sw) * (a === 2 ? 0.12 : 0.06);
+  v.body.rotation.x = a === 2 ? 0.25 : caged ? 0.35 : 0;
+  v.arms[0].rotation.x = a === 3 ? -1.2 + Math.sin(t * 14) * 0.25 : caged ? -2.6 : sw * 0.9;
+  v.arms[1].rotation.x = a === 3 ? -1.2 - Math.sin(t * 14) * 0.25 : caged ? -2.6 : -sw * 0.9;
+}
+function makeHunter(name) {
+  const g = new THREE.Group(), coat = mat("#1a1a20"), body = new THREE.Group();
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.7, 2.0, 9), coat); torso.position.y = 1.0;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 12, 10), mat("#cbb894", { roughness: 1 })); head.position.set(0, 2.25, 0.05); // a sack for a face
+  const hat = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.6, 10), coat); hat.position.y = 2.75;
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.05, 16), coat); brim.position.y = 2.5;
+  const eyeMat = new THREE.MeshBasicMaterial({ color: "#ff2a2a" });
+  for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), eyeMat); e.position.set(s * 0.15, 2.3, 0.42); body.add(e); }
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.4, 0.16), coat); arm.position.set(0.6, 1.4, 0.3); arm.rotation.x = -0.5;
+  const lantern = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 8), new THREE.MeshBasicMaterial({ color: "#ff6040" })); lantern.position.set(0.65, 0.85, 0.75);
+  const haze = glow("#ff2a1a", 4, 0.5); haze.position.y = 1.4;
+  const eyes = glow("#ff4040", 1.1, 0.9); eyes.position.set(0, 2.3, 0.45);
+  torso.castShadow = true;
+  body.add(torso, head, hat, brim, arm, lantern, eyes); g.add(body, haze);
+  const light = new THREE.PointLight("#ff5533", 5, 9, 1.6); light.position.set(0.65, 1.2, 0.8); g.add(light);
+  const tag = name && !ATTRACT ? nameTag(name, "#ff9a9a") : null; if (tag) { tag.position.y = 3.3; g.add(tag); }
+  scene.add(g);
+  return { g, body, haze, hunter: true };
+}
+const views = new Map(); // id -> drawn person, for everyone (me included)
+function viewOf(id, hunter, color, name) {
+  let v = views.get(id);
+  if (v && (!!v.hunter !== hunter || (!hunter && v.color !== color))) { scene.remove(v.g); v = null; }
+  if (!v) { v = hunter ? makeHunter(name) : makeSurvivor(color, name); views.set(id, v); }
+  return v;
+}
+// Footprints: running survivors leave red marks that only the hunter sees.
+const prints = [], printGeo = new THREE.CircleGeometry(0.16, 8).rotateX(-Math.PI / 2);
+function footprint(x, z) { const m = new THREE.Mesh(printGeo, new THREE.MeshBasicMaterial({ color: "#ff3030", transparent: true, opacity: 0.8, depthWrite: false })); m.position.set(x + (Math.random() - 0.5) * 0.4, 0.03, z + (Math.random() - 0.5) * 0.4); scene.add(m); prints.push({ m, life: 3 }); }
+function drawPrints(dt) { for (let i = prints.length - 1; i >= 0; i--) { const p = prints[i]; p.life -= dt; p.m.material.opacity = Math.max(0, p.life / 3) * 0.8; if (p.life <= 0) { scene.remove(p.m); prints.splice(i, 1); } } }
+
+// ── NIGHT (HOST) ────────────────────────────────────────────────────────────────────
+const host = { was: false, last: null, bots: new Map(), lastPub: 0, lastWrite: 0, again: false, gp: [], credit: new Map() };
+/** The night as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() { const g = shared("game", null); return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g; }
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; host.lastWrite = performance.now(); net.setShared("game", JSON.stringify(g)); return g; }
+const newBody = () => ({ x: 0, z: 0, h: 0, a: 0, vx: 0, vz: 0, lungeUntil: 0, lungeReady: 0, ldx: 0, ldz: 1, goal: null, path: [], think: 0, target: "", mode: "", run: false, heard: null });
+const isHunter = (id, G) => G.hunter === id;
+const gatesOpen = (G) => G.gens.filter((p) => p >= 100).length >= CONFIG.need;
+
+function startNight(id) {
+  const here = livePlayers(), prev = game(), was = prev ? prev.hunter : "";
+  // The hunter: a person who didn't hunt last night (a solo player survives first, then takes turns), else a bot.
+  const humans = here.filter((i) => !(ATTRACT && i === net.sessionId)).map((i) => [i, (i === was ? 2 : 0) + Math.random()]).sort((a, b) => a[1] - b[1]).map((r) => r[0]);
+  const human = (prev ? humans.find((i) => i !== was) : humans.length >= 2 ? humans[0] : null) || "";
+  const survivors = here.filter((i) => i !== human);
+  syncBots(Math.max(0, CONFIG.survivors - survivors.length), !human);
+  const hunter = human || [...host.bots.values()].find((b) => b.role === "hunter").id;
+  const ids = [...here, ...host.bots.keys()], t = Date.now();
+  const G = { id, phase: "brief", startAt: t + CONFIG.briefMs, endsAt: t + CONFIG.briefMs + CONFIG.nightMs, hunter, gens: GENS.map(() => 0), cage: {}, out: {}, lost: {}, fr: null, safe: {}, stun: 0, pts: {}, win: "", endedAt: 0,
+    roster: ids.map((i) => [i, nameOf(i), colorOf(i)]) };
+  host.gp = GENS.map(() => 0); host.credit.clear();
+  for (const b of host.bots.values()) Object.assign(b, newBody(), spawnFor(b.id, G));
+  return writeGame(G);
+}
+/** The hunter starts in the middle; survivors start together in their corner (?attract: spread round the generators). */
+function spawnFor(id, G) {
+  if (isHunter(id, G)) return { ...HUNTER_START, h: 0 };
+  const list = G.roster.map((r) => r[0]).filter((i) => !isHunter(i, G)), i = Math.max(0, list.indexOf(id));
+  if (ATTRACT) { const gp = GENS[(i * 2 + G.id) % GENS.length]; return { ...standBy(gp, HUNTER_START), h: 0 }; }
+  return { x: SURV_START.x + ((i % 3) - 1) * 1.2, z: SURV_START.z + (i >= 3 ? 1.2 : 0), h: Math.PI };
+}
+/** Become host: take over the night and the bots exactly as state has them. */
+function adopt() {
+  host.was = true; host.bots.clear();
+  const g = game();
+  for (const b of shared("bots", [])) host.bots.set(b.i, { ...newBody(), id: b.i, name: b.n, color: b.c, role: g && isHunter(b.i, g) ? "hunter" : "survivor", x: b.x, z: b.z, h: b.h });
+  host.gp = g ? [...g.gens] : GENS.map(() => 0); host.credit.clear();
+}
+function syncBots(survivors, needHunter) {
+  for (const [id, b] of host.bots) if (b.role === "hunter" && !needHunter) host.bots.delete(id);
+  if (needHunter && ![...host.bots.values()].some((b) => b.role === "hunter")) host.bots.set("@h", { ...newBody(), id: "@h", name: "The Hunter", color: "#111", role: "hunter" });
+  const surv = () => [...host.bots.values()].filter((b) => b.role !== "hunter");
+  for (let i = 1; surv().length < survivors && i < 64; i++) if (!host.bots.has("@" + i)) {
+    const used = new Set(surv().map((b) => b.color).concat(livePlayers().map(colorOf)));
+    host.bots.set("@" + i, { ...newBody(), id: "@" + i, name: BOT_NAMES[(i - 1) % BOT_NAMES.length], color: COLORS.find((c) => !used.has(c)) || COLORS[i % COLORS.length], role: "survivor" });
+  }
+  while (surv().length > survivors) host.bots.delete(surv().pop().id);
+}
+function botList() {
+  if (!isHost()) return shared("bots", []);
+  return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: +b.x.toFixed(2), z: +b.z.toFixed(2), h: +b.h.toFixed(2), a: b.a }));
+}
+const posCache = new Map();
+/** Another player's packed `p` field, parsed once per change. */
+function posOf(id, p) { let c = posCache.get(id); if (!c || c.raw !== p.p) { c = { raw: p.p, v: parse(p.p, null) }; posCache.set(id, c); } return c.v; }
+/** Everyone this night at their latest known spot: { id, name, color, x, z, h, a, bot, mine }. */
+function people(G) {
+  const out = [], live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId) { out.push({ id, name: myName, color: myColor, x: me.x, z: me.z, h: me.h, a: me.a, mine: true }); continue; }
+    const q = posOf(id, p);
+    if (live.has(id) && q && (!G || q.g === G.id)) out.push({ id, name: p.n || "Player", color: p.c || "#ccc", x: q.x, z: q.z, h: q.h, a: q.a || 0 });
+  }
+  const bots = isHost() ? [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: b.x, z: b.z, h: b.h, a: b.a })) : botList();
+  for (const b of bots) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, z: b.z, h: b.h, a: b.a, bot: true });
+  return out;
+}
+const inPlay = (id, G) => !G.cage[id] && !G.out[id] && !G.lost[id];
+const canMove = (id, G) => inPlay(id, G) && !(isHunter(id, G) && (G.phase === "brief" || G.stun > Date.now()));
+
+function hostTick(dt, now) {
+  if (!host.was) adopt();
+  let g = game();
+  if (!g) g = startNight(1);
+  const t = Date.now(), G = clone(g);
+  let dirty = false;
+  if (G.phase === "brief" && t >= G.startAt) { G.phase = "hunt"; dirty = true; }
+  for (const id of livePlayers()) if (G.phase !== "over" && !G.roster.some((r) => r[0] === id)) { G.roster.push([id, nameOf(id), colorOf(id)]); dirty = true; } // joined mid-night: a survivor
+  if (G.phase !== "over" && !(isBot(G.hunter) ? host.bots.has(G.hunter) : livePlayers().includes(G.hunter))) { // the hunter left: a bot takes over the hunt
+    host.bots.set("@h", { ...newBody(), id: "@h", name: "The Hunter", color: "#111", role: "hunter", ...HUNTER_START });
+    G.hunter = "@h"; if (!G.roster.some((r) => r[0] === "@h")) G.roster.push(["@h", "The Hunter", "#111"]); dirty = true;
+  }
+  const all = people(G);
+  botsTick(dt, G, all);
+  let soft = false;
+  if (G.phase === "hunt") { const r = judge(G, t, all, dt); dirty = r.dirty || dirty; soft = r.soft; }
+  if (dirty || (soft && now - host.lastWrite > 250)) writeGame(G); // generator progress: ~4 writes a second at most
+  if (G.phase === "over" && (t >= G.endsAt || host.again)) startNight(G.id + 1);
+  host.again = false;
+  if (now - host.lastPub > 100) { host.lastPub = now; net.setShared("bots", JSON.stringify(botList())); } // ~10/s, one message for all bots
+}
+/** Repairs, catches, the cage, escapes and the end of the night, all from everyone's latest position. */
+function judge(G, t, all, dt) {
+  let dirty = false, soft = false;
+  const P = CONFIG.points, add = (id, n) => { G.pts[id] = (G.pts[id] || 0) + n; };
+  const hunter = all.find((c) => isHunter(c.id, G)), surv = all.filter((c) => !isHunter(c.id, G)), free = surv.filter((c) => inPlay(c.id, G));
+  for (const id of Object.keys(G.safe)) if (G.safe[id] < t) { delete G.safe[id]; dirty = true; }
+  // repairs: survivors standing still next to a generator
+  GENS.forEach((gp, i) => {
+    if (host.gp[i] >= 100) return;
+    const fixers = free.filter((c) => (c.a === 0 || c.a === 3) && dist(c, gp) < CONFIG.repairReach);
+    if (!fixers.length) return;
+    host.gp[i] = Math.min(100, host.gp[i] + (fixers.length * 100 * dt * 1000) / CONFIG.repairMs);
+    for (const c of fixers) { const cr = (host.credit.get(c.id) || 0) + (100 * dt * 1000) / CONFIG.repairMs; host.credit.set(c.id, cr % 10); if (cr >= 10) { add(c.id, P.repair); dirty = true; } }
+    const shown = Math.floor(host.gp[i]);
+    if (shown !== G.gens[i]) { G.gens[i] = shown; soft = true; if (shown >= 100) dirty = true; }
+  });
+  // catches: the hunter touching a free survivor sends them to the cage
+  if (hunter && G.stun <= t) for (const c of free) {
+    if (G.safe[c.id] || dist(hunter, c) > CONFIG.catchReach) continue;
+    G.cage[c.id] = t; G.stun = t + CONFIG.stunMs; add(hunter.id, P.catch); dirty = true;
+    if (G.fr && G.fr[1] === c.id) G.fr = null;
+    break;
+  }
+  // the cage: a free survivor standing at it for rescueMs opens it for everyone inside
+  for (const id of Object.keys(G.cage)) if (t - G.cage[id] > CONFIG.cageMs) { delete G.cage[id]; G.lost[id] = t; dirty = true; } // nobody came: taken away
+  const caged = Object.keys(G.cage), helper = caged.length && free.find((c) => !G.cage[c.id] && dist(c, CAGE) < CAGE_R + 1.2);
+  if (!helper) { if (G.fr) { G.fr = null; dirty = true; } }
+  else if (!G.fr || G.fr[1] !== helper.id) { G.fr = [t, helper.id]; dirty = true; }
+  else if (t - G.fr[0] >= CONFIG.rescueMs) { for (const id of caged) { delete G.cage[id]; G.safe[id] = t + CONFIG.safeMs; } add(helper.id, P.rescue * caged.length); G.fr = null; dirty = true; }
+  // escapes: through an open gate's doorway
+  if (gatesOpen(G)) for (const c of free) if (!G.cage[c.id] && EXITS.some((e) => dist(c, e.door) < 1.3 || dist(c, e) < 1.3)) { G.out[c.id] = t; add(c.id, P.escape); dirty = true; }
+  // the end: nobody left to catch, or the clock
+  const left = surv.filter((c) => inPlay(c.id, G)), escaped = surv.filter((c) => G.out[c.id]).length;
+  const end = () => { const win = escaped >= Math.ceil(surv.length / 2) ? "survivors" : "hunter"; if (!escaped && hunter) add(hunter.id, P.shutout); Object.assign(G, { phase: "over", win, endedAt: t, endsAt: t + CONFIG.overMs, fr: null }); dirty = true; };
+  if (surv.length && (!left.length || t >= G.endsAt)) end();
+  return { dirty, soft };
+}
+
+// ── BOTS ────────────────────────────────────────────────────────────────────────────
+// One brain per side (and, in ?attract, for your own player). Survivors fix the generator with
+// the most progress that the hunter isn't near, run when it comes, open the cage when it's far,
+// and head for a gate once they're open. The hunter chases what it sees, goes where it hears
+// running or a generator rattling, guards the cage now and then, and lunges when it's close.
+const STILL = { mx: 0, mz: 0, run: false, lunge: false };
+function botsTick(dt, G, all) {
+  const now = performance.now();
+  for (const b of host.bots.values()) {
+    if (G.cage[b.id]) { Object.assign(b, cageSlot(Object.keys(G.cage).indexOf(b.id)), { a: 0 }); continue; }
+    if (G.out[b.id] || G.lost[b.id]) continue;
+    if (isHunter(b.id, G) && G.stun > Date.now() && !b.guardUntil) b.guardUntil = now + 6000 + Math.random() * 4000; else if (G.stun <= Date.now() && now > (b.guardUntil || 0)) b.guardUntil = 0;
+    const hunter = isHunter(b.id, G), inp = canMove(b.id, G) ? (hunter ? hunterInput(b, G, all, now) : survivorInput(b, G, all, now)) : STILL;
+    step(b, inp, dt, hunter ? CONFIG.hunterSpeed * CONFIG.botPace.hunter : (inp.run ? CONFIG.run : CONFIG.walk) * CONFIG.botPace.survivor, now, hunter);
+    if (!hunter && !b.a && GENS.some((gp, i) => G.gens[i] < 100 && dist(b, gp) < CONFIG.repairReach)) b.a = 3; // repairing
+  }
+}
+function steer(b, near = 0.25) {
+  if (!b.goal) return STILL;
+  while (b.path.length > 1 && dist(b, b.path[0]) < 0.45) b.path.shift();
+  const p = b.path[0] || b.goal, dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz);
+  if (d < near && b.path.length <= 1) return STILL;
+  return { mx: dx / d, mz: dz / d, run: b.run, lunge: false };
+}
+function setGoal(b, goal) { b.goal = goal; b.path = goal ? route(b, goal) : []; if (goal && !b.path.length && canSee(b, goal)) b.path = [goal]; }
+function survivorInput(b, G, all, now) {
+  if (now > b.think) {
+    b.think = now + 250 + Math.random() * 300;
+    const H = all.find((c) => isHunter(c.id, G)), dh = H ? dist(H, b) : 99, chased = H && dh < 7 && canSee(H, b);
+    b.run = false;
+    if (chased && !G.safe[b.id]) { // flee: the reachable spot that keeps the most room from the hunter
+      let best = null, bs = -1e9;
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2, p = { x: b.x + Math.sin(a) * 6, z: b.z + Math.cos(a) * 6 };
+        if (wallAt(p.x, p.z) || p.x < 2 || p.z < 2 || p.x > MW * TS - 2 || p.z > MH * TS - 2) continue;
+        const s = dist(p, H) - (canSee(b, p) ? 0 : 4) + Math.random();
+        if (s > bs) { bs = s; best = p; }
+      }
+      b.mode = "flee"; b.run = dh < 5; setGoal(b, best);
+    } else if (gatesOpen(G)) { const e = EXITS.slice().sort((p, q) => dist(p, b) - dist(q, b))[0]; if (b.mode !== "exit") setGoal(b, e.door); b.mode = "exit"; b.run = true; }
+    else if (Object.keys(G.cage).length && (!H || dist(H, CAGE) > 11)) { if (b.mode !== "rescue") setGoal(b, standBy(CAGE, b)); b.mode = "rescue"; }
+    else {
+      const team = [...host.bots.values()].filter((o) => o !== b && o.mode === "fix").map((o) => o.gi);
+      const pick = GENS.map((gp, i) => ({ i, gp, s: G.gens[i] * 0.04 - dist(b, gp) * 0.15 - (H && dist(H, gp) < 8 ? 6 : 0) - team.filter((x) => x === i).length * 2 })).filter((o) => G.gens[o.i] < 100).sort((p, q) => q.s - p.s)[0];
+      if (pick && (b.mode !== "fix" || b.gi !== pick.i)) { b.gi = pick.i; setGoal(b, standBy(pick.gp, b)); }
+      b.mode = pick ? "fix" : "wait";
+    }
+  }
+  return steer(b, b.mode === "rescue" ? 0.6 : 0.2);
+}
+function hunterInput(b, G, all, now) {
+  const t = Date.now();
+  if (now > b.think) {
+    b.think = now + 300 + Math.random() * 300;
+    const prey = all.filter((c) => !isHunter(c.id, G) && inPlay(c.id, G) && !G.safe[c.id]);
+    const seen = prey.filter((c) => dist(c, b) < CONFIG.hunterSight * 0.8 && canSee(b, c)).sort((p, q) => dist(p, b) - dist(q, b))[0];
+    const loud = prey.filter((c) => (c.a === 2 && dist(c, b) < CONFIG.hearRun) || (c.a === 3 && dist(c, b) < CONFIG.hearRepair)).sort((p, q) => dist(p, b) - dist(q, b))[0];
+    if (seen) { b.target = seen.id; b.mode = "chase"; setGoal(b, { x: seen.x, z: seen.z }); }
+    else if (loud) { b.target = ""; b.mode = "hunt"; setGoal(b, { x: loud.x, z: loud.z }); }
+    else if (now < (b.guardUntil || 0)) { if (!b.goal || dist(b, b.goal) < 1.2) { const a = Math.random() * Math.PI * 2, p = { x: CAGE.x + Math.sin(a) * 5, z: CAGE.z + Math.cos(a) * 5 }; if (!wallAt(p.x, p.z)) setGoal(b, p); } b.mode = "guard"; } // just caught someone: stay near the cage a while
+    else if (!b.goal || dist(b, b.goal) < 1.5 || b.mode === "chase") { b.mode = "patrol"; setGoal(b, standBy(GENS[Math.floor(Math.random() * GENS.length)], b)); }
+  }
+  const prey = b.target && all.find((c) => c.id === b.target && inPlay(c.id, G));
+  if (prey && dist(prey, b) < 3 && canSee(b, prey)) { // close: straight at them, lunge sometimes
+    const dx = prey.x - b.x, dz = prey.z - b.z, d = Math.hypot(dx, dz) || 1;
+    return { mx: dx / d, mz: dz / d, run: false, lunge: d < 2.6 && Math.random() < 0.05 };
+  }
+  return steer(b, 0.4);
+}
+/** One movement step (yours or a bot's). The hunter can lunge; survivors can run. */
+function step(b, inp, dt, speed, now, hunter) {
+  let { mx, mz } = inp; const len = Math.hypot(mx, mz);
+  if (len > 1) { mx /= len; mz /= len; }
+  if (hunter && inp.lunge && len > 0.1 && now >= b.lungeReady) { b.lungeUntil = now + CONFIG.lunge.ms; b.lungeReady = now + CONFIG.lunge.cooldown; b.ldx = mx; b.ldz = mz; if (b === me) sound("lunge"); }
+  const lunging = now < b.lungeUntil, v = speed * (lunging ? CONFIG.lunge.speed : 1);
+  const tx = lunging ? b.ldx * v : mx * v, tz = lunging ? b.ldz * v : mz * v, k = Math.min(1, dt * 18);
+  b.vx += (tx - b.vx) * k; b.vz += (tz - b.vz) * k;
+  moveBody(b, b.vx * dt, b.vz * dt);
+  const sp = Math.hypot(b.vx, b.vz);
+  if (sp > 0.4) b.h += angDiff(Math.atan2(b.vx, b.vz), b.h) * Math.min(1, dt * 12);
+  b.a = lunging ? 4 : sp < 0.5 ? 0 : inp.run && !hunter ? 2 : 1;
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const FRIENDLY = ["Brave", "Quiet", "Lucky", "Swift", "Sly", "Bold"], ANIMALS = ["Otter", "Fox", "Moth", "Owl", "Badger", "Hare"];
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() || FRIENDLY[Math.floor(Math.random() * 6)] + " " + ANIMALS[Math.floor(Math.random() * 6)];
+let myColor = COLORS[0]; // picked on join: the first color nobody in the room has
+const me = { ...newBody(), id: "", gameId: -1, lastSend: 0, playAt: 0, lastPrint: 0 };
+const nameOf = (id) => (id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || botList().find((b) => b.i === id)?.n || "Bot" : S.entities.players[id]?.n || "Player");
+const colorOf = (id) => (id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc");
+
+function myTick(dt, g, now) {
+  if (me.gameId !== g.id) { me.gameId = g.id; Object.assign(me, newBody(), spawnFor(net.sessionId, g)); $("over").hidden = true; }
+  const hunter = isHunter(net.sessionId, g);
+  if (g.cage[net.sessionId]) { Object.assign(me, cageSlot(Object.keys(g.cage).indexOf(net.sessionId)), { a: 0, vx: 0, vz: 0 }); }
+  else if (!g.out[net.sessionId] && !g.lost[net.sessionId]) {
+    const all = ATTRACT ? people(g) : null;
+    const inp = !canMove(net.sessionId, g) ? STILL : ATTRACT ? (hunter ? hunterInput(me, g, all, now) : survivorInput(me, g, all, now)) : readInput();
+    step(me, inp, dt, hunter ? CONFIG.hunterSpeed : inp.run ? CONFIG.run : CONFIG.walk, now, hunter);
+    if (!hunter && me.a === 0 && GENS.some((gp, i) => g.gens[i] < 100 && dist(me, gp) < CONFIG.repairReach)) me.a = 3; // repairing
+  }
+  if (now - me.lastSend > 80) { // ~12/s
+    me.lastSend = now;
+    net.me.set("p", JSON.stringify({ g: g.id, x: +me.x.toFixed(2), z: +me.z.toFixed(2), h: +me.h.toFixed(2), a: me.a }));
+  }
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
+let board = null, boardFor = -1, reconnecting = false;
+function hud(g, all) {
+  const t = Date.now(), hunter = isHunter(net.sessionId, g), caged = !!g.cage[net.sessionId], out = !!g.out[net.sessionId], lost = !!g.lost[net.sessionId];
+  if (ATTRACT) { for (const id of ["round", "role", "big", "msg", "net"]) $(id).textContent = ""; return; }
+  const done = g.gens.filter((p) => p >= 100).length, open = gatesOpen(g);
+  const icons = all.filter((c) => !isHunter(c.id, g)).map((c) => (g.out[c.id] ? "🏃" : g.lost[c.id] ? "💀" : g.cage[c.id] ? "⛓" : "🙂")).join(" ");
+  $("round").innerHTML = g.phase === "over" ? "" : `${open ? "🟢 Gates open!" : `⚙ ${done} / ${CONFIG.need} generators`} · ${fmt(Math.max(0, g.endsAt - t))}<small>${icons}</small>`;
+  $("role").classList.toggle("hunter", hunter); $("role").classList.toggle("survivor", !hunter);
+  $("role").textContent = g.phase === "over" ? "" : hunter ? "🔦 You're the HUNTER" : caged ? "⛓ You're CAGED" : out ? "🏃 You ESCAPED" : lost ? "💀 TAKEN" : "🙂 You're a SURVIVOR";
+  $("big").innerHTML = g.phase === "brief" ? `<div>${hunter ? "Catch them all" : "Fix the generators"}<small>${hunter ? "You wake up in" : "The hunter wakes up in"} ${Math.max(1, Math.ceil((g.startAt - t) / 1000))}…</small></div>` : "";
+  let msg = "";
+  if (g.phase !== "over") {
+    if (!me.playAt) me.playAt = t;
+    const early = t - me.playAt < 10000;
+    if (hunter) msg = g.stun > t ? "Got one! Back to the hunt in a moment…" : early ? (touchUI ? "Left thumb walks · LUNGE when you're close" : "WASD or hold the mouse to walk · Space to lunge when close") : "Red footprints = someone running. Rattling generators = someone fixing.";
+    else if (caged) msg = g.fr ? "A friend is opening the cage…" : `Caged! A friend can open it by standing next to it (${Math.max(0, Math.ceil((CONFIG.cageMs - (t - g.cage[net.sessionId])) / 1000))}s)`;
+    else if (lost) msg = "The hunter took you away. Watch the others…";
+    else if (out) msg = "You got out! Watch the others…";
+    else if (g.fr && g.fr[1] === net.sessionId) msg = "Opening the cage… stay close";
+    else if (me.a === 3) msg = "Fixing… stand still";
+    else if (open) msg = "The gates are open: run for a green light!";
+    else if (early) msg = touchUI ? "Stand still at a generator to fix it · RUN is fast but loud" : "WASD to walk · stand still at a generator to fix it · Shift runs (loud)";
+  }
+  $("msg").textContent = msg;
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : reconnecting ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the night" : ""}`;
+  for (const b of document.querySelectorAll(".pad button")) b.hidden = (b.dataset.k === "lunge") !== hunter;
+  document.querySelector('[data-k="lunge"]').classList.toggle("wait", performance.now() < me.lungeReady);
+  const over = g.phase === "over" && t - g.endedAt > 1500;
+  $("over").hidden = !over;
+  if (over) results(g, t, all);
+}
+function results(g, t, all) {
+  const mine = g.pts[net.sessionId] || 0, inRound = g.roster.some((r) => r[0] === net.sessionId), hunter = isHunter(net.sessionId, g);
+  const surv = g.roster.filter((r) => !isHunter(r[0], g)), escaped = surv.filter((r) => g.out[r[0]]).length;
+  $("overTitle").textContent = g.win === "survivors" ? (hunter ? "They got away…" : "The survivors escaped!") : hunter ? "A perfect hunt!" : "The hunter wins";
+  $("overLine").textContent = `${escaped} of ${surv.length} escaped.` + (inRound ? ` You scored ${mine} point${mine === 1 ? "" : "s"}.` : " You'll join the next night.");
+  const rows = g.roster.map(([id, name]) => ({ id, name: S.entities.players[id]?.n || name, pts: g.pts[id] || 0, tag: isHunter(id, g) ? "🔦 " : g.out[id] ? "🏃 " : "⛓ " })).sort((a, b) => b.pts - a.pts);
+  $("results").innerHTML = rows.map((r) => `<li class="${r.id === net.sessionId ? "me" : ""}">${r.tag}${esc(r.id === net.sessionId ? "You" : r.name)}<span>${r.pts}</span></li>`).join("");
+  $("next").textContent = `Next night in ${Math.max(0, Math.ceil((g.endsAt - t) / 1000))}s`;
+  if (boardFor !== g.id) { boardFor = g.id; showBoard(inRound && me.gameId === g.id ? mine : 0); }
+}
+function showBoard(score) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+/** Keep a color nobody else has: the later sessionId gives way, and the bots' colors count as taken. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), bots = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => id < net.sessionId && p.c === myColor) && !bots.includes(myColor)) return;
+  const used = new Set([...others.map(([, p]) => p.c), ...bots]), free = COLORS.find((c) => !used.has(c));
+  if (free && free !== myColor) { myColor = free; net.me.set("c", myColor); }
+}
+$("again").onclick = () => { const g = game(); if (!g || g.phase !== "over") return; if (isHost()) host.again = true; else net.send("again", {}); $("over").hidden = true; };
+
+/** One-off effects worked out from what changed in state (so nobody misses one). */
+let prevG = null;
+function effects(g, all) {
+  if (prevG && prevG.id === g.id) {
+    const at = (id) => all.find((c) => c.id === id);
+    for (const id of Object.keys(g.cage)) if (!prevG.cage[id]) { burst(CAGE.x, 1.5, CAGE.z, "#ff3344", 20, 4); sound(id === net.sessionId ? "caught" : "clank"); if (id === net.sessionId) shake = 0.6; }
+    if (Object.keys(prevG.cage).length > Object.keys(g.cage).length && Object.keys(g.lost).length === Object.keys(prevG.lost).length && g.phase === "hunt") { burst(CAGE.x, 1.2, CAGE.z, "#7dffa0", 24, 5); sound("free"); }
+    g.gens.forEach((p, i) => { if (p >= 100 && prevG.gens[i] < 100) { burst(GENS[i].x, 2.7, GENS[i].z, "#ffd36b", 26, 6); sound("gen"); } });
+    if (gatesOpen(g) && !gatesOpen(prevG)) sound("gates");
+    for (const id of Object.keys(g.lost)) if (!prevG.lost[id]) { burst(CAGE.x, 1.5, CAGE.z, "#ff2233", 30, 6); sound("caught"); }
+    for (const id of Object.keys(g.out)) if (!prevG.out[id]) { const c = at(id); if (c) burst(c.x, 1, c.z, "#7dffa0", 18, 4); sound("escape"); }
+  }
+  prevG = g;
+}
+
+// ── INPUT & SOUND ───────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("pad").hidden = !touchUI;
+if (touchUI) $("msg").style.bottom = "calc(max(18px, env(safe-area-inset-bottom)) + 112px)";
+const keys = new Set(), stick = { id: -1, ox: 0, oy: 0, mx: 0, mz: 0 }, mouse = { down: false, nx: 0, ny: 0 };
+let lungeAt = 0, runHeld = false;
+addEventListener("keydown", (e) => { const k = e.key.toLowerCase(); keys.add(k); unlockAudio(); if (k === " ") { e.preventDefault(); lungeAt = performance.now(); } });
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => { keys.clear(); mouse.down = false; runHeld = false; });
+const ray = new THREE.Raycaster(), groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+function readInput() {
+  const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
+  let mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
+  if (!mx && !mz && mouse.down) { // walk toward the ground point under the pointer, through the camera that drew this frame
+    ray.setFromCamera({ x: mouse.nx, y: mouse.ny }, camera);
+    if (ray.ray.intersectPlane(groundPlane, hit)) { const dx = hit.x - me.x, dz = hit.z - me.z, d = Math.hypot(dx, dz); if (d > 0.4) { mx = dx / d; mz = dz / d; } }
+  }
+  return { mx, mz, run: keys.has("shift") || runHeld, lunge: performance.now() - lungeAt < 150 };
+}
+const cv = renderer.domElement;
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); unlockAudio();
+  if (e.pointerType === "mouse") { if (e.button === 2) lungeAt = performance.now(); else mouse.down = true; mouse.nx = (e.clientX / innerWidth) * 2 - 1; mouse.ny = -(e.clientY / innerHeight) * 2 + 1; return; }
+  if (stick.id >= 0) return;
+  cv.setPointerCapture(e.pointerId);
+  Object.assign(stick, { id: e.pointerId, ox: e.clientX, oy: e.clientY, mx: 0, mz: 0 });
+  Object.assign($("stick").style, { left: e.clientX + "px", top: e.clientY + "px" }); $("stick").hidden = false;
+});
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse") { mouse.nx = (e.clientX / innerWidth) * 2 - 1; mouse.ny = -(e.clientY / innerHeight) * 2 + 1; }
+  if (e.pointerId !== stick.id) return;
+  const dx = e.clientX - stick.ox, dy = e.clientY - stick.oy, d = Math.hypot(dx, dy), k = Math.min(1, d / 50) / (d || 1);
+  stick.mx = dx * k; stick.mz = dy * k; $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => {
+  if (e.pointerType === "mouse" && e.button !== 2) mouse.down = false;
+  if (e.pointerId === stick.id) { Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true; }
+});
+for (const b of document.querySelectorAll(".pad button")) {
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); if (b.dataset.k === "lunge") lungeAt = performance.now(); else { runHeld = true; b.classList.add("on"); } });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) b.addEventListener(ev, () => { if (b.dataset.k === "run") { runHeld = false; b.classList.remove("on"); } });
+}
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+let AC = null;
+function unlockAudio() { if (!AC && !ATTRACT) try { AC = new AudioContext(); } catch {} }
+function sound(kind) {
+  if (!AC) return;
+  const t0 = AC.currentTime, tone = (f, d, type, v, f2, delay = 0) => {
+    const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.setValueAtTime(f, t0 + delay); o.frequency.exponentialRampToValueAtTime(f2, t0 + delay + d);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.setValueAtTime(v, t0 + delay); g.gain.exponentialRampToValueAtTime(0.001, t0 + delay + d); o.connect(g).connect(AC.destination); o.start(t0); o.stop(t0 + delay + d);
+  };
+  if (kind === "beat") { tone(62, 0.14, "sine", 0.45, 40); tone(58, 0.14, "sine", 0.35, 38, 0.18); }
+  if (kind === "caught") tone(420, 0.7, "sawtooth", 0.15, 50);
+  if (kind === "clank") tone(300, 0.25, "square", 0.06, 120);
+  if (kind === "free") { tone(440, 0.2, "triangle", 0.14, 660); tone(660, 0.25, "triangle", 0.12, 990, 0.12); }
+  if (kind === "gen") { tone(110, 0.5, "sawtooth", 0.06, 220); tone(880, 0.35, "sine", 0.12, 1320, 0.1); }
+  if (kind === "gates") { tone(55, 1.2, "sawtooth", 0.08, 220); tone(523, 0.9, "sine", 0.12, 1046, 0.2); }
+  if (kind === "escape") tone(660, 0.4, "triangle", 0.12, 1320);
+  if (kind === "lunge") tone(220, 0.2, "sawtooth", 0.06, 80);
+}
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0, shake = 0, nextBeat = 0;
+const camLook = new THREE.Vector3(), camGoal = new THREE.Vector3();
+const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.65, 3).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#ffd36b", transparent: true, opacity: 0.85 }));
+scene.add(arrow);
+/** A little arrow at your feet: to the nearest generator that needs fixing, or to a gate once they're open. */
+function pointArrow(g) {
+  const survivor = !isHunter(net.sessionId, g) && inPlay(net.sessionId, g) && g.phase !== "over" && !ATTRACT;
+  const open = gatesOpen(g), goals = open ? EXITS.map((e) => e.door) : GENS.filter((gp, i) => g.gens[i] < 100);
+  const goal = goals.sort((p, q) => dist(p, me) - dist(q, me))[0];
+  arrow.visible = survivor && !!goal && dist(goal, me) > 2.5;
+  if (!arrow.visible) return;
+  const a = Math.atan2(goal.x - me.x, goal.z - me.z);
+  arrow.position.set(me.x + Math.sin(a) * 1.1, 0.2, me.z + Math.cos(a) * 1.1); arrow.rotation.y = a; arrow.material.color.set(open ? "#5dff8a" : "#ffd36b");
+}
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)), t = now / 1000; last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt, now); else host.was = false;
+  const g = game();
+  if (!g) { renderer.render(scene, camera); return requestAnimationFrame(frame); }
+  myTick(dt, g, now);
+  const all = people(g);
+  effects(g, all);
+  drawPeople(g, all, now, t, dt);
+  drawYard(g, t, dt); pointArrow(g);
+  drawBits(dt); drawPrints(dt);
+  moveCamera(g, all, dt);
+  renderer.render(scene, camera);
+  if (now - lastHud > 100) { lastHud = now; hud(g, all); }
+  requestAnimationFrame(frame);
+}
+// Other players and (on non-hosts) bots arrive ~10–12 times a second; they're drawn LAG ms in the
+// past, between the two updates around that moment, so they glide instead of stepping.
+const LAG = 150, tracks = new Map();
+function feed(id, raw, s, now) {
+  let tr = tracks.get(id);
+  if (!tr) { tr = { raw: null, buf: [] }; tracks.set(id, tr); }
+  if (tr.raw === raw) return tr;
+  tr.raw = raw;
+  const last = tr.buf[tr.buf.length - 1];
+  if (last && Math.hypot(last.x - s.x, last.z - s.z) > 5) tr.buf.length = 0; // a jump (caged, a new night): no sliding across the yard
+  tr.buf.push({ at: now, x: s.x, z: s.z, h: s.h, a: s.a || 0 });
+  if (tr.buf.length > 10) tr.buf.shift();
+  return tr;
+}
+function sample(tr, now) {
+  const b = tr.buf, t = now - LAG;
+  if (b.length === 1 || t <= b[0].at) return b[0];
+  for (let i = b.length - 1; i > 0; i--) {
+    if (b[i - 1].at > t) continue;
+    const p = b[i - 1], q = b[i];
+    if (t >= q.at) return q;
+    const k = (t - p.at) / Math.max(1, q.at - p.at);
+    return { x: p.x + (q.x - p.x) * k, z: p.z + (q.z - p.z) * k, h: p.h + angDiff(q.h, p.h) * k, a: q.a };
+  }
+  return b[b.length - 1];
+}
+function drawPeople(g, all, now, t, dt) {
+  const seen = new Set(), iHunt = isHunter(net.sessionId, g), raw = S.shared.bots;
+  for (const c of all) {
+    const s = c.mine ? me : c.bot && isHost() ? c : sample(feed(c.id, c.bot ? raw : S.entities.players[c.id].p, c, now), now);
+    const hunter = isHunter(c.id, g), v = viewOf(c.id, hunter, c.color, c.mine ? "" : c.name);
+    seen.add(c.id);
+    // The hunter's screen only shows survivors it can see (and caged ones); running ones leave footprints.
+    const hidden = g.out[c.id] || g.lost[c.id] || (iHunt && !hunter && !g.cage[c.id] && g.phase !== "over" && !(dist(me, s) < CONFIG.hunterSight && canSee(me, s)));
+    v.g.visible = !hidden;
+    if (iHunt && !hunter && s.a === 2 && !g.cage[c.id] && dist(me, s) < CONFIG.hearRun && now - (v.lastPrint || 0) > 250) { v.lastPrint = now; footprint(s.x, s.z); }
+    if (hidden) continue;
+    v.g.position.set(s.x, 0, s.z); v.g.rotation.y = s.h;
+    if (hunter) { v.body.position.y = Math.abs(Math.sin(t * (s.a ? 7 : 2))) * 0.08; v.body.rotation.x = s.a === 4 ? 0.4 : 0; v.haze.material.opacity = 0.45 + 0.15 * Math.sin(t * 5); }
+    else poseSurvivor(v, s.a, !!g.cage[c.id], t);
+    if (s.a === 3 && Math.random() < dt * 6) { const gp = GENS.find((p) => dist(p, s) < CONFIG.repairReach + 0.1); if (gp) burst(gp.x, 1.2, gp.z, "#ffd36b", 1, 3); }
+  }
+  for (const [id, v] of views) if (!seen.has(id)) { scene.remove(v.g); views.delete(id); tracks.delete(id); }
+  // fear: a red edge and a heartbeat when the hunter is close to a survivor (you)
+  const H = all.find((c) => isHunter(c.id, g)), Hv = H && views.get(H.id);
+  const danger = !iHunt && Hv && g.phase === "hunt" && inPlay(net.sessionId, g) ? Math.max(0, 1 - dist(Hv.g.position, me) / CONFIG.terror) : 0;
+  $("fear").style.opacity = ATTRACT ? 0 : g.cage[net.sessionId] && g.phase === "hunt" ? 0.35 : danger;
+  if (danger > 0.1 && now > nextBeat) { nextBeat = now + 1100 - 700 * danger; sound("beat"); }
+}
+function drawYard(g, t, dt) {
+  const td = Date.now();
+  GENS.forEach((gp, i) => {
+    const v = gens[i], p = g.gens[i] / 100, done = p >= 1;
+    if (v.shown !== g.gens[i]) { v.shown = g.gens[i]; v.ring.geometry = progressRing(p); v.ring.visible = p > 0 && !done; v.bulb.material.color.set(done ? "#fff3b0" : "#3a3320"); }
+    v.light.intensity = done ? 9 : 0;
+    v.beacon.material.color.set(done ? "#fff3b0" : "#ff9a3a"); v.beacon.material.opacity = done ? 0.9 : 0.35 + 0.25 * Math.sin(t * 3 + i); v.beacon.scale.setScalar(done ? 2.6 : 1.6);
+    v.body.position.x = !done && p > 0 && Math.random() < 0.5 ? (Math.random() - 0.5) * 0.04 : 0; // rattles while someone fixes it
+  });
+  cageRing.visible = !!g.fr; if (g.fr) cageRing.geometry = progressRing(Math.min(1, (td - g.fr[0]) / CONFIG.rescueMs));
+  cageLight.intensity = Object.keys(g.cage).length ? 5 + Math.sin(t * 6) * 1.5 : 2;
+  const open = gatesOpen(g);
+  for (const gt of gates) { gt.bars.position.y += ((open ? WALL_H - 0.2 : 0) - gt.bars.position.y) * Math.min(1, dt * 1.5); gt.light.color.set(open ? "#5dff8a" : "#ff4433"); gt.light.intensity = open ? 7 : 2.5; }
+  sky.intensity = CONFIG.ambient + g.gens.filter((p) => p >= 100).length * 0.12; // every generator brightens the night
+}
+/** High and behind you (higher on a tall phone). ?attract watches the hunter and whoever it's after. */
+function moveCamera(g, all, dt) {
+  let fx = me.x, fz = me.z;
+  if (ATTRACT) {
+    const H = all.find((c) => isHunter(c.id, g));
+    if (H) { const prey = all.filter((c) => !isHunter(c.id, g) && inPlay(c.id, g) && dist(c, H) < 8).sort((p, q) => dist(p, H) - dist(q, H))[0]; fx = prey ? H.x + (prey.x - H.x) * 0.4 : H.x; fz = prey ? H.z + (prey.z - H.z) * 0.4 : H.z; }
+  }
+  const tall = camera.aspect < 1, hgt = ATTRACT ? 10.5 : tall ? 21 : 15, back = ATTRACT ? 8 : 9;
+  camGoal.set(fx, 0, fz);
+  camLook.lerp(camGoal, 1 - Math.pow(ATTRACT ? 0.1 : 0.002, dt));
+  shake = Math.max(0, shake - dt);
+  camera.position.set(camLook.x + (Math.random() - 0.5) * shake, hgt, camLook.z + back + (Math.random() - 0.5) * shake);
+  camera.lookAt(camLook.x, 0, camLook.z - 0.5);
+}
+
+(async function start() {
+  net = await connect();
+  me.id = net.sessionId;
+  net.onState((st) => { S = st; });
+  net.on("again", () => { const g = game(); if (isHost() && g && g.phase === "over") host.again = true; });
+  net.onDisconnect(() => { reconnecting = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { reconnecting = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  camLook.set(SURV_START.x, 0, SURV_START.z);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

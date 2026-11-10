@@ -1,0 +1,22 @@
+{
+  "name": "Hunter vs Four",
+  "genre": "horror",
+  "dim": "3D",
+  "mode": "Party",
+  "players": "2–5",
+  "hook": "Fix the generators. Open the gate. Don't get caught.",
+  "how": "Four survivors stand still at generators to fix them while the hunter prowls the yard. Fix three and the gates open: get out. Caught survivors go to the cage until a friend stands next to it and lets them out. The hunter wins if most of them never leave.",
+  "controls": "WASD or hold the mouse to walk, Shift to run, Space to lunge as the hunter, or the touch stick and buttons",
+  "uses": [
+    ["Host-run rules", "The host's browser decides repairs, catches, rescues and escapes; if it leaves, the next player takes over."],
+    ["Bots", "Bots fill both sides: survivors fix, flee and rescue; a bot hunter listens for running and rattling generators."],
+    ["Live sync", "Every survivor, generator, cage and gate is the same for everyone."],
+    ["Not secret", "The hunter's screen hides survivors it can't see, but every position is in the room state, so dev tools would show them."],
+    ["Leaderboard", "The most points anyone scored in one night."]
+  ],
+  "ideas": [
+    "Add lockers survivors can hide in",
+    "Make the hunter invisible until it's close",
+    "Add a flashlight that stuns the hunter for a second"
+  ]
+}
