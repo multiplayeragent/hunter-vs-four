@@ -26,6 +26,7 @@
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   .card li.me { color: #ffd36b; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; } /* a status line, not a numbered entry */
   .card p { margin: 6px 0 0; font-size: 14px; opacity: .88; }
   button.go { margin-top: 16px; width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd36b; color: #1b1400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #stick { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 2px solid #ffffff55; background: #ffffff12; pointer-events: none; }
@@ -49,7 +50,7 @@
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><p id="overLine"></p>
   <h3>This night</h3><ol id="results"></ol>
-  <h3>Best nights</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Best nights</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button class="go" id="again">Play again</button>
   <p id="next"></p>
 </div></div>
@@ -111,7 +112,7 @@ const CONFIG = {
   lunge: { speed: 2.3, ms: 300, cooldown: 3000 }, // ...but can lunge: this many times its speed, for this long
   catchReach: 1.1,       // the hunter this close catches you
   stunMs: 1800,          // the hunter stands still this long after a catch
-  botPace: { survivor: 0.93, hunter: 1 }, // bots move at this share of a player's speed
+  botPace: { survivor: 0.93, hunter: 1 }, // bots move at this share of a player's speed (a running survivor bot runs as fast as you)
   hunterSight: 15,       // the hunter's screen only shows survivors in sight within this range...
   hearRun: 14,           // ...or running within this range (they leave footprints)
   hearRepair: 14,        // a bot hunter hears a generator being fixed this far away
@@ -555,7 +556,7 @@ function botsTick(dt, G, all) {
     if (G.out[b.id] || G.lost[b.id]) continue;
     if (isHunter(b.id, G) && G.stun > Date.now() && !b.guardUntil) b.guardUntil = now + 6000 + Math.random() * 4000; else if (G.stun <= Date.now() && now > (b.guardUntil || 0)) b.guardUntil = 0;
     const hunter = isHunter(b.id, G), inp = canMove(b.id, G) ? (hunter ? hunterInput(b, G, all, now) : survivorInput(b, G, all, now)) : STILL;
-    step(b, inp, dt, hunter ? CONFIG.hunterSpeed * CONFIG.botPace.hunter : (inp.run ? CONFIG.run : CONFIG.walk) * CONFIG.botPace.survivor, now, hunter);
+    step(b, inp, dt, hunter ? CONFIG.hunterSpeed * CONFIG.botPace.hunter : (inp.run ? CONFIG.run : CONFIG.walk * CONFIG.botPace.survivor), now, hunter);
     if (!hunter && !b.a && GENS.some((gp, i) => G.gens[i] < 100 && dist(b, gp) < CONFIG.repairReach)) b.a = 3; // repairing
   }
 }
@@ -580,7 +581,7 @@ function survivorInput(b, G, all, now) {
         const s = dist(p, H) - (canSee(b, p) ? 0 : 4) + Math.random();
         if (s > bs) { bs = s; best = p; }
       }
-      b.mode = "flee"; b.run = dh < 5; setGoal(b, best);
+      b.mode = "flee"; b.run = true; setGoal(b, best);
     } else if (gatesOpen(G)) { const e = EXITS.slice().sort((p, q) => dist(p, b) - dist(q, b))[0]; if (b.mode !== "exit") setGoal(b, e.door); b.mode = "exit"; b.run = true; }
     else if (Object.keys(G.cage).length && (!H || dist(H, CAGE) > 11)) { if (b.mode !== "rescue") setGoal(b, standBy(CAGE, b)); b.mode = "rescue"; }
     else {
@@ -697,11 +698,11 @@ function results(g, t, all) {
 }
 function showBoard(score) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class=\"note\">Loading…</li>";
   (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Set the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li class=\"note\">No scores yet. Set the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
 }
 /** Keep a color nobody else has: the later sessionId gives way, and the bots' colors count as taken. */
 function fixColor() {
@@ -762,6 +763,7 @@ cv.addEventListener("pointermove", (e) => {
   const dx = e.clientX - stick.ox, dy = e.clientY - stick.oy, d = Math.hypot(dx, dy), k = Math.min(1, d / 50) / (d || 1);
   stick.mx = dx * k; stick.mz = dy * k; $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
 });
+addEventListener("pointerup", (e) => { if (e.pointerType === "mouse" && e.button !== 2) mouse.down = false; }); // let go anywhere (off the canvas too): stop walking
 for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => {
   if (e.pointerType === "mouse" && e.button !== 2) mouse.down = false;
   if (e.pointerId === stick.id) { Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true; }
